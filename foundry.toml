@@ -4,7 +4,8 @@ out = "out"
 libs = ["lib"]
 remappings = [
   '@openzeppelin=lib/openzeppelin-contracts/',
-  '@forge-std=lib/forge-std/'
+  '@forge-std=lib/forge-std/',
+  '@chainlink/=lib/chainlink-brownie-contracts/'
 ]
 
 [etherscan]
