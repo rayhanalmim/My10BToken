@@ -22,55 +22,73 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         bool active;
     }
 
-    uint256 public constant TOTAL_TOKENS = 1_000_000;
     uint256 public constant MIN_HOLD_TIME = 1 days;
     uint256 public constant REWARD_DISTRIBUTION_PERIOD = 30 days;
+    uint256 public constant TOTAL_PROPERTY_TOKENS = 1000000;
     uint256 public lastRewardDistribution;
 
+    address[] public investors;
+    mapping(address => bool) public isInvestor;
     mapping(uint256 => Property) public properties;
     mapping(address => mapping(uint256 => uint256)) public userInvestments;
-    mapping(address => uint256) public holdStartTime;
+    mapping(address => mapping(uint256 => uint256)) public holdStartTime;
     mapping(address => uint256) public accumulatedReward;
 
     AggregatorV3Interface internal priceFeed;
     uint256 public propertyCounter;
 
-    address public tokenAddress; // Address of the deployed My10BToken contract
+    address public tokenAddress;
 
     event PropertyCreated(
         uint256 indexed propertyId,
         string name,
         uint256 totalSupply,
+        uint256 totalRaised,
         uint256 annualRewardRate,
         address propertyToken
     );
 
-    event Invested(address indexed user, uint256 propertyId, uint256 amount);
-    event Withdrawn(address indexed user, uint256 propertyId, uint256 amount);
+    event Invested(
+        address indexed user,
+        uint256 propertyId,
+        uint256 amount,
+        uint256 tokensReceived
+    );
+    event Withdrawn(
+        address indexed user,
+        uint256 propertyId,
+        uint256 amount,
+        uint256 tokensBurned
+    );
     event RewardDistributed(address indexed user, uint256 amount);
 
     constructor(address _priceFeed, address _tokenAddress) Ownable(msg.sender) {
-        // Call Ownable constructor explicitly
         priceFeed = AggregatorV3Interface(_priceFeed);
-        tokenAddress = _tokenAddress; // Set token contract address
+        tokenAddress = _tokenAddress;
         lastRewardDistribution = block.timestamp;
     }
 
-    // Admin creates a property token for investments
     function createProperty(
         string memory _name,
         uint256 _totalSupply,
+        uint256 _totalRaised,
         uint256 _annualRewardRate
     ) external onlyOwner {
         require(_annualRewardRate > 0, "Annual reward rate must be positive");
+        require(_totalRaised > 0, "Total raised amount must be positive");
 
-        PropertyToken newToken = new PropertyToken(_name, _name, msg.sender);
+        PropertyToken newToken = new PropertyToken(
+            _name,
+            _name,
+            msg.sender,
+            TOTAL_PROPERTY_TOKENS
+        );
 
         propertyCounter++;
         properties[propertyCounter] = Property({
             name: _name,
             totalSupply: _totalSupply,
-            totalRaised: 0,
+            totalRaised: _totalRaised,
             annualRewardRate: _annualRewardRate,
             investedAmount: 0,
             propertyToken: address(newToken),
@@ -81,120 +99,137 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
             propertyCounter,
             _name,
             _totalSupply,
+            _totalRaised,
             _annualRewardRate,
             address(newToken)
         );
     }
 
-    function invest(
-        uint256 _propertyId,
-        uint256 _amount
-    ) external whenNotPaused {
+    function getTokenPrice(uint256 _propertyId) public view returns (uint256) {
+        Property storage property = properties[_propertyId];
+        require(property.totalSupply > 0, "Invalid property supply");
+        return property.totalRaised / property.totalSupply;
+    }
+
+    function invest(uint256 _propertyId) external payable whenNotPaused {
         Property storage property = properties[_propertyId];
         require(property.active, "Property is not active");
+        require(property.totalRaised > 0, "Total raised must be set");
+        require(msg.value > 0, "Investment amount must be greater than zero");
 
-        ERC20(tokenAddress).transferFrom(msg.sender, address(this), _amount);
-        property.investedAmount += _amount;
-        property.totalRaised += _amount;
-        userInvestments[msg.sender][_propertyId] += _amount;
+        uint256 propertyTokens = (msg.value * 100000) / property.totalRaised;
+        require(propertyTokens > 0, "Investment too low for tokens");
 
-        // Calculate token price based on totalRaised / totalSupply
-        uint256 tokenPrice = property.totalRaised / TOTAL_TOKENS;
-        uint256 propertyTokensToMint = _amount / tokenPrice;
-
-        ERC20(property.propertyToken).transfer(
-            msg.sender,
-            propertyTokensToMint
+        uint256 contractTokenBalance = PropertyToken(property.propertyToken)
+            .balanceOf(address(this));
+        require(
+            contractTokenBalance >= propertyTokens,
+            "Not enough tokens available for distribution"
         );
 
-        emit Invested(msg.sender, _propertyId, _amount);
+        property.investedAmount += msg.value;
+        userInvestments[msg.sender][_propertyId] += msg.value;
+
+        PropertyToken(property.propertyToken).transfer(
+            msg.sender,
+            propertyTokens
+        );
+
+        assert(!isInvestor[msg.sender]);
+        isInvestor[msg.sender] = true;
+        investors.push(msg.sender);
+
+        assert(holdStartTime[msg.sender][_propertyId] == 0);
+        holdStartTime[msg.sender][_propertyId] = block.timestamp;
+
+        emit Invested(msg.sender, _propertyId, msg.value, propertyTokens);
     }
 
     function withdraw(uint256 _propertyId) external whenNotPaused {
         Property storage property = properties[_propertyId];
-        uint256 amount = userInvestments[msg.sender][_propertyId];
-        require(amount > 0, "No investment found");
+        uint256 investedAmount = userInvestments[msg.sender][_propertyId];
+        require(investedAmount > 0, "No investment found");
+
+        uint256 tokenPrice = getTokenPrice(_propertyId);
+        require(tokenPrice > 0, "Token price invalid");
+
+        uint256 propertyTokensToBurn = investedAmount / tokenPrice;
 
         userInvestments[msg.sender][_propertyId] = 0;
-        property.investedAmount -= amount;
+        property.investedAmount -= investedAmount;
+        holdStartTime[msg.sender][_propertyId] = 0;
 
-        // Calculate token price based on totalRaised / totalSupply
-        uint256 tokenPrice = property.totalRaised / TOTAL_TOKENS;
-        uint256 propertyTokensToBurn = amount / tokenPrice;
-
-        ERC20(tokenAddress).transfer(msg.sender, amount);
-        ERC20(property.propertyToken).transferFrom(
+        ERC20(tokenAddress).transfer(msg.sender, investedAmount);
+        PropertyToken(property.propertyToken).burn(
             msg.sender,
-            address(this),
             propertyTokensToBurn
         );
 
-        emit Withdrawn(msg.sender, _propertyId, amount);
+        emit Withdrawn(
+            msg.sender,
+            _propertyId,
+            investedAmount,
+            propertyTokensToBurn
+        );
     }
 
-    // Chainlink Keeper function to automate reward distribution every 30 days
+    function distributeRewards() public whenNotPaused {
+        require(
+            block.timestamp >=
+                lastRewardDistribution + REWARD_DISTRIBUTION_PERIOD,
+            "Rewards not due yet"
+        );
+
+        for (uint256 i = 1; i <= propertyCounter; i++) {
+            Property storage property = properties[i];
+
+            if (property.investedAmount == 0) continue;
+
+            uint256 totalRewardsForProperty = (property.investedAmount *
+                property.annualRewardRate) /
+                100 /
+                12;
+
+            for (uint256 j = 0; j < investors.length; j++) {
+                address user = investors[j];
+
+                uint256 userInvestment = userInvestments[user][i];
+                if (
+                    userInvestment > 0 &&
+                    block.timestamp >= holdStartTime[user][i] + MIN_HOLD_TIME
+                ) {
+                    uint256 userReward = (userInvestment *
+                        totalRewardsForProperty) / property.investedAmount;
+
+                    if (userReward > 0) {
+                        accumulatedReward[user] += userReward;
+                        ERC20(tokenAddress).safeTransfer(user, userReward);
+                        emit RewardDistributed(user, userReward);
+                    }
+                }
+            }
+        }
+
+        lastRewardDistribution = block.timestamp;
+    }
+
     function checkUpkeep(
-        bytes calldata /*checkData*/
-    )
-        external
-        view
-        override
-        returns (bool upkeepNeeded, bytes memory performData)
-    {
+        bytes calldata
+    ) external view override returns (bool upkeepNeeded, bytes memory) {
         upkeepNeeded =
             (block.timestamp - lastRewardDistribution) >
             REWARD_DISTRIBUTION_PERIOD;
-        performData = ""; // Explicitly setting an empty bytes value
     }
 
-    function performUpkeep(bytes calldata /*performData*/) external override {
+    function performUpkeep(bytes calldata) external override {
         require(
             (block.timestamp - lastRewardDistribution) >
                 REWARD_DISTRIBUTION_PERIOD,
             "Not time yet"
         );
         distributeRewards();
-        lastRewardDistribution = block.timestamp;
     }
 
-    // Distribute rewards to all investors
-    function distributeRewards() public whenNotPaused {
-        for (uint256 i = 1; i <= propertyCounter; i++) {
-            for (uint256 j = 0; j < address(this).balance; j++) {
-                address user = address(
-                    uint160(
-                        uint256(keccak256(abi.encodePacked(block.timestamp, j)))
-                    )
-                );
-                if (accumulatedReward[user] > 0) {
-                    // Use safeTransfer from SafeERC20
-                    ERC20(tokenAddress).safeTransfer(
-                        user,
-                        accumulatedReward[user]
-                    );
-                    emit RewardDistributed(user, accumulatedReward[user]);
-                    accumulatedReward[user] = 0;
-                }
-            }
-        }
-    }
-
-    function getTokenPrice(uint256 _propertyId) public view returns (uint256) {
-        Property storage property = properties[_propertyId];
-        if (property.totalRaised == 0) return 0;
-        return property.totalRaised / TOTAL_TOKENS;
-    }
-
-    // Admin manually distributes MY10B tokens for traditional investors
-    function distributeTraditionalPayment(
-        address user,
-        uint256 amount
-    ) external onlyOwner {
-        // Use safeTransfer from SafeERC20
-        ERC20(address(this)).safeTransfer(user, amount);
-    }
-
-    // Pause and Unpause the contract
     function pauseContract() external onlyOwner {
         _pause();
     }
