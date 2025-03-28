@@ -127,13 +127,12 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
             "Not enough tokens available for distribution"
         );
 
+        
+
         property.investedAmount += msg.value;
         userInvestments[msg.sender][_propertyId] += msg.value;
 
-        PropertyToken(property.propertyToken).transfer(
-            msg.sender,
-            propertyTokens
-        );
+     
 
         assert(!isInvestor[msg.sender]);
         isInvestor[msg.sender] = true;
@@ -145,7 +144,10 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         emit Invested(msg.sender, _propertyId, msg.value, propertyTokens);
     }
 
-    function withdraw(uint256 _propertyId) external whenNotPaused {
+    function withdraw(
+        uint256 _propertyId,
+        uint256 _propertyTokensToReturn
+    ) external payable whenNotPaused {
         Property storage property = properties[_propertyId];
         uint256 investedAmount = userInvestments[msg.sender][_propertyId];
         require(investedAmount > 0, "No investment found");
@@ -153,23 +155,34 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         uint256 tokenPrice = getTokenPrice(_propertyId);
         require(tokenPrice > 0, "Token price invalid");
 
-        uint256 propertyTokensToBurn = investedAmount / tokenPrice;
+        uint256 my10bTokensToReturn = (_propertyTokensToReturn * tokenPrice) /
+            100000;
 
-        userInvestments[msg.sender][_propertyId] = 0;
-        property.investedAmount -= investedAmount;
-        holdStartTime[msg.sender][_propertyId] = 0;
-
-        ERC20(tokenAddress).transfer(msg.sender, investedAmount);
-        PropertyToken(property.propertyToken).burn(
-            msg.sender,
-            propertyTokensToBurn
+        uint256 propertyTokenBalance = PropertyToken(property.propertyToken)
+            .balanceOf(msg.sender);
+        require(
+            propertyTokenBalance >= _propertyTokensToReturn,
+            "Not enough property tokens to return"
         );
+
+        uint256 amountToReturn = (_propertyTokensToReturn * tokenPrice) /
+            100000;
+        userInvestments[msg.sender][_propertyId] -= amountToReturn;
+        property.investedAmount -= amountToReturn;
+
+        PropertyToken(property.propertyToken).transferFrom(
+            msg.sender,
+            address(this),
+            _propertyTokensToReturn
+        );
+
+        ERC20(tokenAddress).transfer(msg.sender, my10bTokensToReturn);
 
         emit Withdrawn(
             msg.sender,
             _propertyId,
-            investedAmount,
-            propertyTokensToBurn
+            amountToReturn,
+            _propertyTokensToReturn
         );
     }
 
@@ -219,6 +232,8 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         upkeepNeeded =
             (block.timestamp - lastRewardDistribution) >
             REWARD_DISTRIBUTION_PERIOD;
+
+        return (upkeepNeeded, "");
     }
 
     function performUpkeep(bytes calldata) external override {
@@ -230,11 +245,5 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         distributeRewards();
     }
 
-    function pauseContract() external onlyOwner {
-        _pause();
-    }
-
-    function unpauseContract() external onlyOwner {
-        _unpause();
-    }
+   
 }

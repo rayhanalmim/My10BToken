@@ -6,6 +6,6 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract PropertyToken is ERC20 {
     constructor(string memory name, string memory symbol, address owner, uint256 totalSupply) ERC20(name, symbol) {
-        _mint(owner, 100_000 * 10 ** decimals()); 
+        _mint(owner, totalSupply * 10 ** decimals()); 
     }
 }
