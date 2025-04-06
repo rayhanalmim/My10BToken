@@ -170,23 +170,15 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
 
         uint256 propertyTokenBalance = PropertyToken(property.propertyToken)
             .balanceOf(msg.sender);
+
         require(
             propertyTokenBalance >= _propertyTokensToReturn,
             "Insufficient property tokens"
         );
 
-        // Require approval
-        require(
-            PropertyToken(property.propertyToken).allowance(
-                msg.sender,
-                address(this)
-            ) >= _propertyTokensToReturn,
-            "Approve tokens first"
-        );
-
         // Calculate equivalent investment amount
-        uint256 amountToReturn = (_propertyTokensToReturn * tokenPrice) /
-            100000;
+        uint256 amountToReturn = _propertyTokensToReturn * tokenPrice;
+
         require(
             amountToReturn <= investedAmount,
             "Withdrawal exceeds investment"
@@ -199,14 +191,20 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         userInvestments[msg.sender][_propertyId] = remainingInvestment;
         property.investedAmount -= amountToReturn;
 
-        // Adjust holding start time using reverse weighted average
         if (remainingInvestment == 0) {
             holdStartTime[msg.sender][_propertyId] = 0;
         } else {
             uint256 oldHoldStart = holdStartTime[msg.sender][_propertyId];
-            // New weighted average based on the remaining portion
-            holdStartTime[msg.sender][_propertyId] = oldHoldStart;
-            // Or apply weighted average logic if needed in more complex systems
+            uint256 nowTime = block.timestamp;
+
+            uint256 withdrawnInvestment = amountToReturn;
+            uint256 totalBefore = remainingInvestment + withdrawnInvestment;
+
+            // Reverse-weighted average formula
+            uint256 newHoldStart = ((oldHoldStart * totalBefore) -
+                (nowTime * withdrawnInvestment)) / remainingInvestment;
+
+            holdStartTime[msg.sender][_propertyId] = newHoldStart;
         }
 
         // Burn property tokens from user (transfer to contract)
@@ -217,7 +215,7 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         );
 
         // Send back stable token (My10B, etc.)
-        ERC20(tokenAddress).safeTransfer(msg.sender, amountToReturn);
+        ERC20(property.propertyToken).safeTransfer(msg.sender, amountToReturn);
 
         emit Withdrawn(
             msg.sender,
