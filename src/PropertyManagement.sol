@@ -24,7 +24,7 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
 
     uint256 public constant MIN_HOLD_TIME = 1 days;
     uint256 public constant REWARD_DISTRIBUTION_PERIOD = 30 days;
-    uint256 public constant TOTAL_PROPERTY_TOKENS = 1000000;
+    uint256 public constant TOTAL_PROPERTY_TOKENS = 1e5;
     uint256 public lastRewardDistribution;
 
     address[] public investors;
@@ -70,7 +70,6 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
 
     function createProperty(
         string memory _name,
-        uint256 _totalSupply,
         uint256 _totalRaised,
         uint256 _annualRewardRate
     ) external onlyOwner {
@@ -87,7 +86,7 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         propertyCounter++;
         properties[propertyCounter] = Property({
             name: _name,
-            totalSupply: _totalSupply,
+            totalSupply: TOTAL_PROPERTY_TOKENS,
             totalRaised: _totalRaised,
             annualRewardRate: _annualRewardRate,
             investedAmount: 0,
@@ -98,7 +97,7 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         emit PropertyCreated(
             propertyCounter,
             _name,
-            _totalSupply,
+            TOTAL_PROPERTY_TOKENS,
             _totalRaised,
             _annualRewardRate,
             address(newToken)
@@ -115,31 +114,45 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         Property storage property = properties[_propertyId];
         require(property.active, "Property is not active");
         require(property.totalRaised > 0, "Total raised must be set");
-        require(msg.value > 0, "Investment amount must be greater than zero");
+        require(msg.value > 0, "Investment must be > 0");
 
-        uint256 propertyTokens = (msg.value * 100000) / property.totalRaised;
+        uint256 propertyTokens = (msg.value * TOTAL_PROPERTY_TOKENS) /
+            property.totalRaised;
         require(propertyTokens > 0, "Investment too low for tokens");
 
         uint256 contractTokenBalance = PropertyToken(property.propertyToken)
             .balanceOf(address(this));
         require(
             contractTokenBalance >= propertyTokens,
-            "Not enough tokens available for distribution"
+            "Not enough tokens available"
         );
 
-        
+        // Track investor
+        if (!isInvestor[msg.sender]) {
+            isInvestor[msg.sender] = true;
+            investors.push(msg.sender);
+        }
 
-        property.investedAmount += msg.value;
-        userInvestments[msg.sender][_propertyId] += msg.value;
+        uint256 prevInvestment = userInvestments[msg.sender][_propertyId];
+        uint256 newInvestment = msg.value;
+        uint256 totalInvestment = prevInvestment + newInvestment;
 
-     
+        // Update mappings
+        property.investedAmount += newInvestment;
+        userInvestments[msg.sender][_propertyId] = totalInvestment;
 
-        assert(!isInvestor[msg.sender]);
-        isInvestor[msg.sender] = true;
-        investors.push(msg.sender);
+        // Weighted average hold start time
+        if (prevInvestment == 0) {
+            holdStartTime[msg.sender][_propertyId] = block.timestamp;
+        } else {
+            uint256 prevHoldStart = holdStartTime[msg.sender][_propertyId];
+            uint256 newHoldStart = ((prevHoldStart * prevInvestment) +
+                (block.timestamp * newInvestment)) / totalInvestment;
 
-        assert(holdStartTime[msg.sender][_propertyId] == 0);
-        holdStartTime[msg.sender][_propertyId] = block.timestamp;
+            holdStartTime[msg.sender][_propertyId] = newHoldStart;
+        }
+
+        ERC20(property.propertyToken).safeTransfer(msg.sender, propertyTokens);
 
         emit Invested(msg.sender, _propertyId, msg.value, propertyTokens);
     }
@@ -147,36 +160,64 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
     function withdraw(
         uint256 _propertyId,
         uint256 _propertyTokensToReturn
-    ) external payable whenNotPaused {
+    ) external whenNotPaused {
         Property storage property = properties[_propertyId];
         uint256 investedAmount = userInvestments[msg.sender][_propertyId];
         require(investedAmount > 0, "No investment found");
 
         uint256 tokenPrice = getTokenPrice(_propertyId);
-        require(tokenPrice > 0, "Token price invalid");
-
-        uint256 my10bTokensToReturn = (_propertyTokensToReturn * tokenPrice) /
-            100000;
+        require(tokenPrice > 0, "Invalid token price");
 
         uint256 propertyTokenBalance = PropertyToken(property.propertyToken)
             .balanceOf(msg.sender);
         require(
             propertyTokenBalance >= _propertyTokensToReturn,
-            "Not enough property tokens to return"
+            "Insufficient property tokens"
         );
 
+        // Require approval
+        require(
+            PropertyToken(property.propertyToken).allowance(
+                msg.sender,
+                address(this)
+            ) >= _propertyTokensToReturn,
+            "Approve tokens first"
+        );
+
+        // Calculate equivalent investment amount
         uint256 amountToReturn = (_propertyTokensToReturn * tokenPrice) /
             100000;
-        userInvestments[msg.sender][_propertyId] -= amountToReturn;
+        require(
+            amountToReturn <= investedAmount,
+            "Withdrawal exceeds investment"
+        );
+
+        // Adjust user's investment
+        uint256 prevInvestment = userInvestments[msg.sender][_propertyId];
+        uint256 remainingInvestment = prevInvestment - amountToReturn;
+
+        userInvestments[msg.sender][_propertyId] = remainingInvestment;
         property.investedAmount -= amountToReturn;
 
+        // Adjust holding start time using reverse weighted average
+        if (remainingInvestment == 0) {
+            holdStartTime[msg.sender][_propertyId] = 0;
+        } else {
+            uint256 oldHoldStart = holdStartTime[msg.sender][_propertyId];
+            // New weighted average based on the remaining portion
+            holdStartTime[msg.sender][_propertyId] = oldHoldStart;
+            // Or apply weighted average logic if needed in more complex systems
+        }
+
+        // Burn property tokens from user (transfer to contract)
         PropertyToken(property.propertyToken).transferFrom(
             msg.sender,
             address(this),
             _propertyTokensToReturn
         );
 
-        ERC20(tokenAddress).transfer(msg.sender, my10bTokensToReturn);
+        // Send back stable token (My10B, etc.)
+        ERC20(tokenAddress).safeTransfer(msg.sender, amountToReturn);
 
         emit Withdrawn(
             msg.sender,
@@ -244,6 +285,4 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         );
         distributeRewards();
     }
-
-   
 }
