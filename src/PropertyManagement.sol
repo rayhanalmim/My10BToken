@@ -24,7 +24,7 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
 
     uint256 public constant MIN_HOLD_TIME = 1 days;
     uint256 public constant REWARD_DISTRIBUTION_PERIOD = 30 days;
-    uint256 public constant TOTAL_PROPERTY_TOKENS = 1e5;
+    uint256 public constant TOTAL_PROPERTY_TOKENS = 100000 * 1e18;
     uint256 public lastRewardDistribution;
 
     address[] public investors;
@@ -71,6 +71,7 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
 
     function createProperty(
         string memory _name,
+        string memory _symbol,
         uint256 _totalRaised,
         uint256 _annualRewardRate
     ) external onlyOwner {
@@ -79,8 +80,8 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
 
         PropertyToken newToken = new PropertyToken(
             _name,
-            _name,
-            msg.sender,
+            _symbol,
+            address(this),
             TOTAL_PROPERTY_TOKENS
         );
 
@@ -108,7 +109,9 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
     function getTokenPrice(uint256 _propertyId) public view returns (uint256) {
         Property storage property = properties[_propertyId];
         require(property.totalSupply > 0, "Invalid property supply");
-        return property.totalRaised / property.totalSupply;
+
+        // Scale up to preserve precision (returns price in wei)
+        return (property.totalRaised * 1e18) / property.totalSupply;
     }
 
     function invest(uint256 _propertyId) external payable whenNotPaused {
@@ -117,12 +120,16 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         require(property.totalRaised > 0, "Total raised must be set");
         require(msg.value > 0, "Investment must be > 0");
 
-        uint256 propertyTokens = (msg.value * TOTAL_PROPERTY_TOKENS) / property.totalRaised;
+        uint256 propertyTokens = (msg.value * TOTAL_PROPERTY_TOKENS) /
+            property.totalRaised;
         require(propertyTokens > 0, "Investment too low for tokens");
 
         uint256 contractTokenBalance = PropertyToken(property.propertyToken)
             .balanceOf(address(this));
-        require(contractTokenBalance >= propertyTokens, "Not enough tokens available");
+        require(
+            contractTokenBalance >= propertyTokens,
+            "Not enough tokens available"
+        );
 
         // Track investor
         if (!isInvestor[msg.sender]) {
@@ -154,7 +161,10 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         emit Invested(msg.sender, _propertyId, msg.value, propertyTokens);
     }
 
-    function withdraw(uint256 _propertyId, uint256 _propertyTokensToReturn) external whenNotPaused {
+    function withdraw(
+        uint256 _propertyId,
+        uint256 _propertyTokensToReturn
+    ) external whenNotPaused {
         Property storage property = properties[_propertyId];
         uint256 investedAmount = userInvestments[msg.sender][_propertyId];
         require(investedAmount > 0, "No investment found");
@@ -165,12 +175,18 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         uint256 propertyTokenBalance = PropertyToken(property.propertyToken)
             .balanceOf(msg.sender);
 
-        require(propertyTokenBalance >= _propertyTokensToReturn, "Insufficient property tokens");
+        require(
+            propertyTokenBalance >= _propertyTokensToReturn,
+            "Insufficient property tokens"
+        );
 
         // Calculate equivalent investment amount
         uint256 amountToReturn = _propertyTokensToReturn * tokenPrice;
 
-        require(amountToReturn <= investedAmount, "Withdrawal exceeds investment");
+        require(
+            amountToReturn <= investedAmount,
+            "Withdrawal exceeds investment"
+        );
 
         // Adjust user's investment
         uint256 prevInvestment = userInvestments[msg.sender][_propertyId];
@@ -205,18 +221,30 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         // Send back stable token (My10B, etc.)
         ERC20(property.propertyToken).safeTransfer(msg.sender, amountToReturn);
 
-        emit Withdrawn(msg.sender, _propertyId, amountToReturn, _propertyTokensToReturn);
+        emit Withdrawn(
+            msg.sender,
+            _propertyId,
+            amountToReturn,
+            _propertyTokensToReturn
+        );
     }
 
     function distributeRewards() public whenNotPaused {
-        require(block.timestamp >= lastRewardDistribution + REWARD_DISTRIBUTION_PERIOD, "Rewards not due yet");
+        require(
+            block.timestamp >=
+                lastRewardDistribution + REWARD_DISTRIBUTION_PERIOD,
+            "Rewards not due yet"
+        );
 
         for (uint256 i = 1; i <= propertyCounter; i++) {
             Property storage property = properties[i];
 
             if (property.investedAmount == 0) continue;
 
-            uint256 totalRewardsForProperty = (property.investedAmount * property.annualRewardRate) / 100 / 12;
+            uint256 totalRewardsForProperty = (property.investedAmount *
+                property.annualRewardRate) /
+                100 /
+                12;
 
             for (uint256 j = 0; j < investors.length; j++) {
                 address user = investors[j];
@@ -225,8 +253,14 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
                 uint256 holdStart = holdStartTime[user][i];
 
                 // Ensure user held tokens for at least 24 hours and it's a new reward period
-                if (userInvestment > 0 && block.timestamp >= holdStart + MIN_HOLD_TIME && block.timestamp >= lastClaimed[user][i] + REWARD_DISTRIBUTION_PERIOD) {
-                    uint256 userReward = (userInvestment * totalRewardsForProperty) / property.investedAmount;
+                if (
+                    userInvestment > 0 &&
+                    block.timestamp >= holdStart + MIN_HOLD_TIME &&
+                    block.timestamp >=
+                    lastClaimed[user][i] + REWARD_DISTRIBUTION_PERIOD
+                ) {
+                    uint256 userReward = (userInvestment *
+                        totalRewardsForProperty) / property.investedAmount;
 
                     if (userReward > 0) {
                         accumulatedReward[user] += userReward;
@@ -241,13 +275,21 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         lastRewardDistribution = block.timestamp;
     }
 
-    function checkUpkeep(bytes calldata) external view override returns (bool upkeepNeeded, bytes memory) {
-        upkeepNeeded = (block.timestamp - lastRewardDistribution) > REWARD_DISTRIBUTION_PERIOD;
+    function checkUpkeep(
+        bytes calldata
+    ) external view override returns (bool upkeepNeeded, bytes memory) {
+        upkeepNeeded =
+            (block.timestamp - lastRewardDistribution) >
+            REWARD_DISTRIBUTION_PERIOD;
         return (upkeepNeeded, "");
     }
 
     function performUpkeep(bytes calldata) external override {
-        require((block.timestamp - lastRewardDistribution) > REWARD_DISTRIBUTION_PERIOD, "Not time yet");
+        require(
+            (block.timestamp - lastRewardDistribution) >
+                REWARD_DISTRIBUTION_PERIOD,
+            "Not time yet"
+        );
         distributeRewards();
     }
 }
