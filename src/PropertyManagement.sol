@@ -118,7 +118,6 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         Property storage property = properties[_propertyId];
         require(property.totalSupply > 0, "Invalid property supply");
 
-        // Scale up to preserve precision (returns price in wei)
         return (property.totalRaised * 1e18) / property.totalSupply;
     }
 
@@ -139,7 +138,6 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
             "Not enough tokens available"
         );
 
-        // Track investor
         if (!isInvestor[msg.sender]) {
             isInvestor[msg.sender] = true;
             investors.push(msg.sender);
@@ -149,11 +147,9 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         uint256 newInvestment = msg.value;
         uint256 totalInvestment = prevInvestment + newInvestment;
 
-        // Update mappings
         property.investedAmount += newInvestment;
         userInvestments[msg.sender][_propertyId] = totalInvestment;
 
-        // Weighted average hold start time
         if (prevInvestment == 0) {
             holdStartTime[msg.sender][_propertyId] = block.timestamp;
         } else {
@@ -188,7 +184,6 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
             "Insufficient property tokens"
         );
 
-        // Calculate equivalent investment amount
         uint256 amountToReturn = _propertyTokensToReturn * tokenPrice;
 
         require(
@@ -196,7 +191,6 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
             "Withdrawal exceeds investment"
         );
 
-        // Adjust user's investment
         uint256 prevInvestment = userInvestments[msg.sender][_propertyId];
         uint256 remainingInvestment = prevInvestment - amountToReturn;
 
@@ -212,21 +206,18 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
             uint256 withdrawnInvestment = amountToReturn;
             uint256 totalBefore = remainingInvestment + withdrawnInvestment;
 
-            // Reverse-weighted average formula
             uint256 newHoldStart = ((oldHoldStart * totalBefore) -
                 (nowTime * withdrawnInvestment)) / remainingInvestment;
 
             holdStartTime[msg.sender][_propertyId] = newHoldStart;
         }
 
-        // Burn property tokens from user (transfer to contract)
         PropertyToken(property.propertyToken).transferFrom(
             msg.sender,
             address(this),
             _propertyTokensToReturn
         );
 
-        // Send back stable token (My10B, etc.)
         ERC20(property.propertyToken).safeTransfer(msg.sender, amountToReturn);
 
         emit Withdrawn(
@@ -260,7 +251,6 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
                 uint256 userInvestment = userInvestments[user][i];
                 uint256 holdStart = holdStartTime[user][i];
 
-                // Ensure user held tokens for at least 24 hours and it's a new reward period
                 if (
                     userInvestment > 0 &&
                     block.timestamp >= holdStart + MIN_HOLD_TIME &&
