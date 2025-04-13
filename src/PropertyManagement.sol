@@ -61,6 +61,14 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         uint256 amount,
         uint256 tokensBurned
     );
+    event Traded(
+        address indexed from,
+        address indexed to,
+        uint256 propertyId,
+        uint256 amount,
+        uint256 value
+    );
+
     event RewardDistributed(address indexed user, uint256 amount);
 
     constructor(address _priceFeed, address _tokenAddress) Ownable(msg.sender) {
@@ -291,5 +299,59 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
             "Not time yet"
         );
         distributeRewards();
+    }
+
+    function tradePropertyTokens(
+        uint256 _propertyId,
+        address _to,
+        uint256 _amount
+    ) external whenNotPaused {
+        require(_to != address(0), "Invalid recipient");
+        require(_amount > 0, "Amount must be > 0");
+
+        Property storage property = properties[_propertyId];
+        require(property.active, "Inactive property");
+
+        uint256 senderBalance = PropertyToken(property.propertyToken).balanceOf(
+            msg.sender
+        );
+        require(senderBalance >= _amount, "Insufficient token balance");
+
+        uint256 tokenPrice = getTokenPrice(_propertyId);
+        require(tokenPrice > 0, "Invalid token price");
+
+        uint256 investmentValue = (_amount * tokenPrice) / 1e18;
+
+        userInvestments[msg.sender][_propertyId] -= investmentValue;
+
+        if (userInvestments[msg.sender][_propertyId] == 0) {
+            holdStartTime[msg.sender][_propertyId] = 0;
+        }
+
+        if (!isInvestor[_to]) {
+            isInvestor[_to] = true;
+            investors.push(_to);
+        }
+
+        uint256 prevInvestment = userInvestments[_to][_propertyId];
+        uint256 totalInvestment = prevInvestment + investmentValue;
+        userInvestments[_to][_propertyId] = totalInvestment;
+
+        if (prevInvestment == 0) {
+            holdStartTime[_to][_propertyId] = block.timestamp;
+        } else {
+            uint256 prevHoldStart = holdStartTime[_to][_propertyId];
+            uint256 weightedStart = ((prevHoldStart * prevInvestment) +
+                (block.timestamp * investmentValue)) / totalInvestment;
+            holdStartTime[_to][_propertyId] = weightedStart;
+        }
+
+        PropertyToken(property.propertyToken).transferFrom(
+            msg.sender,
+            _to,
+            _amount
+        );
+
+        emit Traded(msg.sender, _to, _propertyId, _amount, investmentValue);
     }
 }
