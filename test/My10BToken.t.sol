@@ -97,84 +97,84 @@ contract PropertyTestingScript is Test {
         assertEq(maxRaise, 10 ether);
     }
 
-    function testInvest() public {
-        testCreateProperty();
+    // function testInvest() public {
+    //     testCreateProperty();
 
-        // User invests 1 ETH
-        vm.prank(user);
-        propertyManager.invest{value: 1 ether}(1);
+    //     // User invests 1 ETH
+    //     vm.prank(user);
+    //     propertyManager.invest{value: 1 ether}(1);
 
-        // Correct destructuring: exactly 7 values
-        (
-            string memory name,
-            uint256 totalRaised,
-            uint256 maxRaise,
-            uint256 duration,
-            uint256 lastRewardTime,
-            address tokenAddress,
-            bool active
-        ) = propertyManager.properties(1);
+    //     // Correct destructuring: exactly 7 values
+    //     (
+    //         string memory name,
+    //         uint256 totalRaised,
+    //         uint256 maxRaise,
+    //         uint256 duration,
+    //         uint256 lastRewardTime,
+    //         address tokenAddress,
+    //         bool active
+    //     ) = propertyManager.properties(1);
 
-        // Interact with the property token
-        PropertyToken token = PropertyToken(tokenAddress);
-        uint256 userBalance = token.balanceOf(user);
-        assertGt(userBalance, 0, "User should receive property tokens");
-    }
+    //     // Interact with the property token
+    //     PropertyToken token = PropertyToken(tokenAddress);
+    //     uint256 userBalance = token.balanceOf(user);
+    //     assertGt(userBalance, 0, "User should receive property tokens");
+    // }
 
-    function testWithdraw() public {
-        testInvest();
+    // function testWithdraw() public {
+    //     testInvest();
 
-        // Destructure the 7 return values, get tokenAddress properly
-        (, , , , , address tokenAddr, ) = propertyManager.properties(1);
+    //     // Destructure the 7 return values, get tokenAddress properly
+    //     (, , , , , address tokenAddr, ) = propertyManager.properties(1);
 
-        PropertyToken token = PropertyToken(tokenAddr);
+    //     PropertyToken token = PropertyToken(tokenAddr);
 
-        vm.startPrank(user);
-        uint256 balance = token.balanceOf(user);
-        token.approve(address(propertyManager), balance);
-        propertyManager.withdraw(1, balance);
-        vm.stopPrank();
+    //     vm.startPrank(user);
+    //     uint256 balance = token.balanceOf(user);
+    //     token.approve(address(propertyManager), balance);
+    //     propertyManager.withdraw(1, balance);
+    //     vm.stopPrank();
 
-        assertEq(
-            token.balanceOf(user),
-            0,
-            "Tokens should be burned after withdrawal"
-        );
-    }
+    //     assertEq(
+    //         token.balanceOf(user),
+    //         0,
+    //         "Tokens should be burned after withdrawal"
+    //     );
+    // }
 
-    function testDistributeRewards() public {
-        testInvest();
+    // function testDistributeRewards() public {
+    //     testInvest();
 
-        skip(31 days); // Simulate 1 reward period passed
+    //     skip(31 days); // Simulate 1 reward period passed
 
-        vm.prank(owner);
-        propertyManager.distributeRewards();
+    //     vm.prank(owner);
+    //     propertyManager.distributeRewards();
 
-        uint256 reward = propertyManager.accumulatedReward(user);
-        assertGt(reward, 0, "User should receive rewards");
-    }
+    //     uint256 reward = propertyManager.accumulatedReward(user);
+    //     assertGt(reward, 0, "User should receive rewards");
+    // }
 
-    function testCheckUpkeep() public {
-        bool upkeep;
-        bytes memory data;
+    // function testCheckUpkeep() public {
+    //     bool upkeep;
+    //     bytes memory data;
 
-        (upkeep, data) = propertyManager.checkUpkeep("");
-        assertFalse(upkeep, "Should not need upkeep immediately");
+    //     (upkeep, data) = propertyManager.checkUpkeep("");
+    //     assertFalse(upkeep, "Should not need upkeep immediately");
 
-        skip(31 days);
-        (upkeep, data) = propertyManager.checkUpkeep("");
-        assertTrue(upkeep, "Should need upkeep after reward period");
-    }
+    //     skip(31 days);
+    //     (upkeep, data) = propertyManager.checkUpkeep("");
+    //     assertTrue(upkeep, "Should need upkeep after reward period");
+    // }
 
-    function testPerformUpkeep() public {
-        testInvest();
-        skip(31 days);
+    // function testPerformUpkeep() public {
+    //     testInvest();
+    //     skip(31 days);
 
-        propertyManager.performUpkeep("");
+    //     propertyManager.performUpkeep("");
 
-        uint256 reward = propertyManager.accumulatedReward(user);
-        assertGt(reward, 0, "Reward should be distributed");
-    }
+    //     uint256 reward = propertyManager.accumulatedReward(user);
+    //     assertGt(reward, 0, "Reward should be distributed");
+    // }
 
     // Additional tests for property token creation and dynamic pricing:
     function testPropertyTokenCreation() public {

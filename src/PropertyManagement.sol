@@ -39,6 +39,9 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
     mapping(bytes32 => uint256) public frozenInvestments;
     mapping(address => bool) public isTraditionalInvestor;
     mapping(address => mapping(bytes32 => bool)) public hasClaimedTokens;
+    mapping(bytes32 => uint256) public traditionalInvestmentStartTime;
+    mapping(address => mapping(bytes32 => uint256))
+        public traditionalInvestmentDuration;
 
     AggregatorV3Interface internal priceFeed;
     uint256 public propertyCounter;
@@ -60,6 +63,7 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         uint256 amount,
         uint256 tokensReceived
     );
+
     event Withdrawn(
         address indexed user,
         uint256 propertyId,
@@ -199,6 +203,7 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         frozenInvestments[secretHash] += _amount;
 
         isTraditionalInvestor[_investor] = true;
+        traditionalInvestmentStartTime[secretHash] = block.timestamp;
 
         Property storage property = properties[_propertyId];
         property.investedAmount += _amount;
@@ -218,76 +223,88 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
             "Tokens already claimed"
         );
 
-        ERC20(tokenAddress).safeTransfer(msg.sender, amount);
+        uint256 startTime = traditionalInvestmentStartTime[secretHash];
+        traditionalInvestmentDuration[msg.sender][secretHash] =
+            block.timestamp -
+            startTime;
 
+        ERC20(tokenAddress).safeTransfer(msg.sender, amount);
         frozenInvestments[secretHash] = 0;
         hasClaimedTokens[msg.sender][secretHash] = true;
+
+        if (!isInvestor[msg.sender]) {
+            isInvestor[msg.sender] = true;
+            investors.push(msg.sender);
+        }
+
+        isTraditionalInvestor[msg.sender] = false;
+        delete traditionalInvestmentStartTime[secretHash];
 
         emit TraditionalInvestmentClaimed(msg.sender, 0, amount);
     }
 
-    function withdraw(
-        uint256 _propertyId,
-        uint256 _propertyTokensToReturn
-    ) external whenNotPaused {
-        Property storage property = properties[_propertyId];
-        uint256 investedAmount = userInvestments[msg.sender][_propertyId];
-        require(investedAmount > 0, "No investment found");
+    // function withdraw(
+    //     uint256 _propertyId,
+    //     uint256 _propertyTokensToReturn
+    // ) external whenNotPaused {
+    //     Property storage property = properties[_propertyId];
+    //     uint256 investedAmount = userInvestments[msg.sender][_propertyId];
+    //     require(investedAmount > 0, "No investment found");
 
-        uint256 tokenPrice = getTokenPrice(_propertyId);
-        require(tokenPrice > 0, "Invalid token price");
+    //     uint256 tokenPrice = getTokenPrice(_propertyId);
+    //     require(tokenPrice > 0, "Invalid token price");
 
-        uint256 propertyTokenBalance = PropertyToken(property.propertyToken)
-            .balanceOf(msg.sender);
+    //     uint256 propertyTokenBalance = PropertyToken(property.propertyToken)
+    //         .balanceOf(msg.sender);
 
-        require(
-            propertyTokenBalance >= _propertyTokensToReturn,
-            "Insufficient property tokens"
-        );
+    //     require(
+    //         propertyTokenBalance >= _propertyTokensToReturn,
+    //         "Insufficient property tokens"
+    //     );
 
-        uint256 amountToReturn = _propertyTokensToReturn * tokenPrice;
+    //     uint256 amountToReturn = _propertyTokensToReturn * tokenPrice;
 
-        require(
-            amountToReturn <= investedAmount,
-            "Withdrawal exceeds investment"
-        );
+    //     require(
+    //         amountToReturn <= investedAmount,
+    //         "Withdrawal exceeds investment"
+    //     );
 
-        uint256 prevInvestment = userInvestments[msg.sender][_propertyId];
-        uint256 remainingInvestment = prevInvestment - amountToReturn;
+    //     uint256 prevInvestment = userInvestments[msg.sender][_propertyId];
+    //     uint256 remainingInvestment = prevInvestment - amountToReturn;
 
-        userInvestments[msg.sender][_propertyId] = remainingInvestment;
-        property.investedAmount -= amountToReturn;
+    //     userInvestments[msg.sender][_propertyId] = remainingInvestment;
+    //     property.investedAmount -= amountToReturn;
 
-        if (remainingInvestment == 0) {
-            holdStartTime[msg.sender][_propertyId] = 0;
-        } else {
-            uint256 oldHoldStart = holdStartTime[msg.sender][_propertyId];
-            uint256 nowTime = block.timestamp;
+    //     if (remainingInvestment == 0) {
+    //         holdStartTime[msg.sender][_propertyId] = 0;
+    //     } else {
+    //         uint256 oldHoldStart = holdStartTime[msg.sender][_propertyId];
+    //         uint256 nowTime = block.timestamp;
 
-            uint256 withdrawnInvestment = amountToReturn;
-            uint256 totalBefore = remainingInvestment + withdrawnInvestment;
+    //         uint256 withdrawnInvestment = amountToReturn;
+    //         uint256 totalBefore = remainingInvestment + withdrawnInvestment;
 
-            uint256 newHoldStart = ((oldHoldStart * totalBefore) -
-                (nowTime * withdrawnInvestment)) / remainingInvestment;
+    //         uint256 newHoldStart = ((oldHoldStart * totalBefore) -
+    //             (nowTime * withdrawnInvestment)) / remainingInvestment;
 
-            holdStartTime[msg.sender][_propertyId] = newHoldStart;
-        }
+    //         holdStartTime[msg.sender][_propertyId] = newHoldStart;
+    //     }
 
-        PropertyToken(property.propertyToken).transferFrom(
-            msg.sender,
-            address(this),
-            _propertyTokensToReturn
-        );
+    //     PropertyToken(property.propertyToken).transferFrom(
+    //         msg.sender,
+    //         address(this),
+    //         _propertyTokensToReturn
+    //     );
 
-        ERC20(property.propertyToken).safeTransfer(msg.sender, amountToReturn);
+    //     ERC20(property.propertyToken).safeTransfer(msg.sender, amountToReturn);
 
-        emit Withdrawn(
-            msg.sender,
-            _propertyId,
-            amountToReturn,
-            _propertyTokensToReturn
-        );
-    }
+    //     emit Withdrawn(
+    //         msg.sender,
+    //         _propertyId,
+    //         amountToReturn,
+    //         _propertyTokensToReturn
+    //     );
+    // }
 
     function distributeRewards() public whenNotPaused {
         require(
