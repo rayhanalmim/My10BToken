@@ -35,6 +35,11 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
     mapping(address => uint256) public accumulatedReward;
     mapping(address => mapping(uint256 => uint256)) public lastClaimed;
 
+    // Traditional Investment Mechanism
+    mapping(bytes32 => uint256) public frozenInvestments;
+    mapping(address => bool) public isTraditionalInvestor;
+    mapping(address => mapping(bytes32 => bool)) public hasClaimedTokens;
+
     AggregatorV3Interface internal priceFeed;
     uint256 public propertyCounter;
 
@@ -70,6 +75,17 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
     );
 
     event RewardDistributed(address indexed user, uint256 amount);
+
+    event TraditionalInvestmentAdded(
+        address indexed user,
+        uint256 propertyId,
+        uint256 amount
+    );
+    event TraditionalInvestmentClaimed(
+        address indexed user,
+        uint256 propertyId,
+        uint256 amount
+    );
 
     constructor(address _priceFeed, address _tokenAddress) Ownable(msg.sender) {
         priceFeed = AggregatorV3Interface(_priceFeed);
@@ -121,13 +137,22 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         return (property.totalRaised * 1e18) / property.totalSupply;
     }
 
-    function invest(uint256 _propertyId) external payable whenNotPaused {
+    function invest(
+        uint256 _propertyId,
+        uint256 _amount
+    ) external whenNotPaused {
         Property storage property = properties[_propertyId];
         require(property.active, "Property is not active");
         require(property.totalRaised > 0, "Total raised must be set");
-        require(msg.value > 0, "Investment must be > 0");
+        require(_amount > 0, "Investment must be > 0");
 
-        uint256 propertyTokens = (msg.value * TOTAL_PROPERTY_TOKENS) /
+        ERC20(tokenAddress).safeTransferFrom(
+            msg.sender,
+            address(this),
+            _amount
+        );
+
+        uint256 propertyTokens = (_amount * TOTAL_PROPERTY_TOKENS) /
             property.totalRaised;
         require(propertyTokens > 0, "Investment too low for tokens");
 
@@ -144,7 +169,7 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         }
 
         uint256 prevInvestment = userInvestments[msg.sender][_propertyId];
-        uint256 newInvestment = msg.value;
+        uint256 newInvestment = _amount;
         uint256 totalInvestment = prevInvestment + newInvestment;
 
         property.investedAmount += newInvestment;
@@ -156,13 +181,49 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
             uint256 prevHoldStart = holdStartTime[msg.sender][_propertyId];
             uint256 newHoldStart = ((prevHoldStart * prevInvestment) +
                 (block.timestamp * newInvestment)) / totalInvestment;
-
             holdStartTime[msg.sender][_propertyId] = newHoldStart;
         }
 
         ERC20(property.propertyToken).safeTransfer(msg.sender, propertyTokens);
 
-        emit Invested(msg.sender, _propertyId, msg.value, propertyTokens);
+        emit Invested(msg.sender, _propertyId, _amount, propertyTokens);
+    }
+
+    function addTraditionalInvestment(
+        address _investor,
+        uint256 _propertyId,
+        string calldata _secret,
+        uint256 _amount
+    ) external onlyOwner {
+        bytes32 secretHash = keccak256(abi.encodePacked(_secret));
+        frozenInvestments[secretHash] += _amount;
+
+        isTraditionalInvestor[_investor] = true;
+
+        Property storage property = properties[_propertyId];
+        property.investedAmount += _amount;
+
+        emit TraditionalInvestmentAdded(_investor, _propertyId, _amount);
+    }
+
+    function claimTokensBySecret(
+        string calldata _secret
+    ) external whenNotPaused {
+        bytes32 secretHash = keccak256(abi.encodePacked(_secret));
+        uint256 amount = frozenInvestments[secretHash];
+
+        require(amount > 0, "No frozen investment found for this secret");
+        require(
+            !hasClaimedTokens[msg.sender][secretHash],
+            "Tokens already claimed"
+        );
+
+        ERC20(tokenAddress).safeTransfer(msg.sender, amount);
+
+        frozenInvestments[secretHash] = 0;
+        hasClaimedTokens[msg.sender][secretHash] = true;
+
+        emit TraditionalInvestmentClaimed(msg.sender, 0, amount);
     }
 
     function withdraw(
