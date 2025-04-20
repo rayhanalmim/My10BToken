@@ -243,69 +243,6 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         emit TraditionalInvestmentClaimed(msg.sender, 0, amount);
     }
 
-    // function withdraw(
-    //     uint256 _propertyId,
-    //     uint256 _propertyTokensToReturn
-    // ) external whenNotPaused {
-    //     Property storage property = properties[_propertyId];
-    //     uint256 investedAmount = userInvestments[msg.sender][_propertyId];
-    //     require(investedAmount > 0, "No investment found");
-
-    //     uint256 tokenPrice = getTokenPrice(_propertyId);
-    //     require(tokenPrice > 0, "Invalid token price");
-
-    //     uint256 propertyTokenBalance = PropertyToken(property.propertyToken)
-    //         .balanceOf(msg.sender);
-
-    //     require(
-    //         propertyTokenBalance >= _propertyTokensToReturn,
-    //         "Insufficient property tokens"
-    //     );
-
-    //     uint256 amountToReturn = _propertyTokensToReturn * tokenPrice;
-
-    //     require(
-    //         amountToReturn <= investedAmount,
-    //         "Withdrawal exceeds investment"
-    //     );
-
-    //     uint256 prevInvestment = userInvestments[msg.sender][_propertyId];
-    //     uint256 remainingInvestment = prevInvestment - amountToReturn;
-
-    //     userInvestments[msg.sender][_propertyId] = remainingInvestment;
-    //     property.investedAmount -= amountToReturn;
-
-    //     if (remainingInvestment == 0) {
-    //         holdStartTime[msg.sender][_propertyId] = 0;
-    //     } else {
-    //         uint256 oldHoldStart = holdStartTime[msg.sender][_propertyId];
-    //         uint256 nowTime = block.timestamp;
-
-    //         uint256 withdrawnInvestment = amountToReturn;
-    //         uint256 totalBefore = remainingInvestment + withdrawnInvestment;
-
-    //         uint256 newHoldStart = ((oldHoldStart * totalBefore) -
-    //             (nowTime * withdrawnInvestment)) / remainingInvestment;
-
-    //         holdStartTime[msg.sender][_propertyId] = newHoldStart;
-    //     }
-
-    //     PropertyToken(property.propertyToken).transferFrom(
-    //         msg.sender,
-    //         address(this),
-    //         _propertyTokensToReturn
-    //     );
-
-    //     ERC20(property.propertyToken).safeTransfer(msg.sender, amountToReturn);
-
-    //     emit Withdrawn(
-    //         msg.sender,
-    //         _propertyId,
-    //         amountToReturn,
-    //         _propertyTokensToReturn
-    //     );
-    // }
-
     function distributeRewards() public whenNotPaused {
         require(
             block.timestamp >=
@@ -421,5 +358,65 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         );
 
         emit Traded(msg.sender, _to, _propertyId, _amount, investmentValue);
+    }
+
+    function onTokenTransfer(
+        address from,
+        address to,
+        uint256 amount,
+        address token
+    ) external {
+        uint256 propertyId = getPropertyIdByToken(token);
+        require(propertyId > 0, "Unknown property token");
+
+        Property storage property = properties[propertyId];
+        require(
+            msg.sender == property.propertyToken,
+            "Unauthorized token transfer callback"
+        );
+
+        uint256 tokenPrice = getTokenPrice(propertyId);
+        uint256 investmentValue = (amount * tokenPrice) / 1e18;
+
+        // Update sender data
+        if (userInvestments[from][propertyId] >= investmentValue) {
+            userInvestments[from][propertyId] -= investmentValue;
+
+            if (userInvestments[from][propertyId] == 0) {
+                holdStartTime[from][propertyId] = 0;
+            }
+        }
+
+        // Update receiver data
+        if (!isInvestor[to]) {
+            isInvestor[to] = true;
+            investors.push(to);
+        }
+
+        uint256 prevInvestment = userInvestments[to][propertyId];
+        uint256 totalInvestment = prevInvestment + investmentValue;
+        userInvestments[to][propertyId] = totalInvestment;
+
+        if (prevInvestment == 0) {
+            holdStartTime[to][propertyId] = block.timestamp;
+        } else {
+            uint256 prevHold = holdStartTime[to][propertyId];
+            uint256 weightedStart = ((prevHold * prevInvestment) +
+                (block.timestamp * investmentValue)) / totalInvestment;
+            holdStartTime[to][propertyId] = weightedStart;
+        }
+
+        emit Traded(from, to, propertyId, amount, investmentValue);
+    }
+
+    function getPropertyIdByToken(
+        address token
+    ) internal view returns (uint256) {
+        for (uint256 i = 1; i <= propertyCounter; i++) {
+            if (properties[i].propertyToken == token) {
+                return i;
+            }
+        }
+        return 0;
     }
 }
