@@ -8,8 +8,14 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {KeeperCompatibleInterface} from "../lib/chainlink-brownie-contracts/contracts/src/v0.8/automation/interfaces/KeeperCompatibleInterface.sol";
 import {AggregatorV3Interface} from "../lib/chainlink-brownie-contracts/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {PropertyToken} from "./PropertyToken.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
+contract PropertyManagement is
+    Ownable,
+    KeeperCompatibleInterface,
+    Pausable,
+    ReentrancyGuard
+{
     using SafeERC20 for ERC20;
 
     struct Property {
@@ -144,7 +150,7 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
     function invest(
         uint256 _propertyId,
         uint256 _amount
-    ) external whenNotPaused {
+    ) external whenNotPaused nonReentrant {
         Property storage property = properties[_propertyId];
         require(property.active, "Property is not active");
         require(property.totalRaised > 0, "Total raised must be set");
@@ -213,7 +219,7 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
 
     function claimTokensBySecret(
         string calldata _secret
-    ) external whenNotPaused {
+    ) external whenNotPaused nonReentrant {
         bytes32 secretHash = keccak256(abi.encodePacked(_secret));
         uint256 amount = frozenInvestments[secretHash];
 
@@ -243,7 +249,7 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         emit TraditionalInvestmentClaimed(msg.sender, 0, amount);
     }
 
-    function distributeRewards() public whenNotPaused {
+    function distributeRewards() public whenNotPaused nonReentrant {
         require(
             block.timestamp >=
                 lastRewardDistribution + REWARD_DISTRIBUTION_PERIOD,
@@ -297,7 +303,7 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         return (upkeepNeeded, "");
     }
 
-    function performUpkeep(bytes calldata) external override {
+    function performUpkeep(bytes calldata) external override nonReentrant {
         require(
             (block.timestamp - lastRewardDistribution) >
                 REWARD_DISTRIBUTION_PERIOD,
@@ -310,7 +316,7 @@ contract PropertyManagement is Ownable, KeeperCompatibleInterface, Pausable {
         uint256 _propertyId,
         address _to,
         uint256 _amount
-    ) external whenNotPaused {
+    ) external whenNotPaused nonReentrant {
         require(_to != address(0), "Invalid recipient");
         require(_amount > 0, "Amount must be > 0");
 

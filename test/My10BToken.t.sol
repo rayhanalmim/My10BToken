@@ -85,96 +85,99 @@ contract PropertyTestingScript is Test {
         propertyManager.createProperty("Gulshan Heights", "one", 10 ether, 12);
         (
             string memory name,
+            uint256 totalSupply,
             uint256 totalRaised,
-            uint256 maxRaise,
-            uint256 duration,
-            uint256 lastRewardTime,
+            uint256 annualRewardRate,
+            uint256 investedAmount,
             address tokenAddress,
             bool active
         ) = propertyManager.properties(1);
 
         assertEq(name, "Gulshan Heights");
-        assertEq(maxRaise, 10 ether);
+        assertEq(totalRaised, 10 ether);
+        assertEq(totalSupply, 100000 * 1e18);
+        assertEq(annualRewardRate, 12);
+        assertTrue(active);
     }
 
-    // function testInvest() public {
-    //     testCreateProperty();
+    function testInvest() public {
+        testCreateProperty();
 
-    //     // User invests 1 ETH
-    //     vm.prank(user);
-    //     propertyManager.invest{value: 1 ether}(1);
+        // Mint and approve tokens to the user
+        stableToken.mint(user, 1 ether);
 
-    //     // Correct destructuring: exactly 7 values
-    //     (
-    //         string memory name,
-    //         uint256 totalRaised,
-    //         uint256 maxRaise,
-    //         uint256 duration,
-    //         uint256 lastRewardTime,
-    //         address tokenAddress,
-    //         bool active
-    //     ) = propertyManager.properties(1);
+        vm.startPrank(user);
+        stableToken.approve(address(propertyManager), 1 ether);
+        propertyManager.invest(1, 1 ether);
+        vm.stopPrank();
 
-    //     // Interact with the property token
-    //     PropertyToken token = PropertyToken(tokenAddress);
-    //     uint256 userBalance = token.balanceOf(user);
-    //     assertGt(userBalance, 0, "User should receive property tokens");
-    // }
+        (, , , , , address tokenAddress, ) = propertyManager.properties(1);
+        PropertyToken token = PropertyToken(tokenAddress);
+        uint256 userBalance = token.balanceOf(user);
 
-    // function testWithdraw() public {
-    //     testInvest();
+        assertGt(userBalance, 0, "User should receive property tokens");
+    }
 
-    //     // Destructure the 7 return values, get tokenAddress properly
-    //     (, , , , , address tokenAddr, ) = propertyManager.properties(1);
+    function testDistributeRewards() public {
+        testInvest();
+        skip(31 days);
 
-    //     PropertyToken token = PropertyToken(tokenAddr);
+        vm.prank(owner);
+        propertyManager.distributeRewards();
 
-    //     vm.startPrank(user);
-    //     uint256 balance = token.balanceOf(user);
-    //     token.approve(address(propertyManager), balance);
-    //     propertyManager.withdraw(1, balance);
-    //     vm.stopPrank();
+        uint256 reward = propertyManager.accumulatedReward(user);
+        assertGt(reward, 0, "User should receive rewards");
+    }
 
-    //     assertEq(
-    //         token.balanceOf(user),
-    //         0,
-    //         "Tokens should be burned after withdrawal"
-    //     );
-    // }
+    function testTraditionalInvestmentAndClaim() public {
+        propertyManager.createProperty("Banani View", "BNV", 10 ether, 15);
 
-    // function testDistributeRewards() public {
-    //     testInvest();
+        string memory secret = "mySecret";
+        bytes32 hashed = keccak256(abi.encodePacked(secret));
 
-    //     skip(31 days); // Simulate 1 reward period passed
+        vm.prank(owner);
+        propertyManager.addTraditionalInvestment(user, 1, secret, 5 ether);
 
-    //     vm.prank(owner);
-    //     propertyManager.distributeRewards();
+        skip(2 days);
 
-    //     uint256 reward = propertyManager.accumulatedReward(user);
-    //     assertGt(reward, 0, "User should receive rewards");
-    // }
+        vm.startPrank(user);
+        propertyManager.claimTokensBySecret(secret);
+        vm.stopPrank();
 
-    // function testCheckUpkeep() public {
-    //     bool upkeep;
-    //     bytes memory data;
+        assertEq(
+            stableToken.balanceOf(user),
+            5 ether,
+            "User should receive claimed amount"
+        );
+        assertTrue(
+            propertyManager.hasClaimedTokens(user, hashed),
+            "Claim flag should be true"
+        );
+    }
 
-    //     (upkeep, data) = propertyManager.checkUpkeep("");
-    //     assertFalse(upkeep, "Should not need upkeep immediately");
+    function testWalletToWalletTransferTracking() public {
+        testInvest(); // Makes user 0x1 invest
 
-    //     skip(31 days);
-    //     (upkeep, data) = propertyManager.checkUpkeep("");
-    //     assertTrue(upkeep, "Should need upkeep after reward period");
-    // }
+        (, , , , , address tokenAddress, ) = propertyManager.properties(1);
+        PropertyToken token = PropertyToken(tokenAddress);
 
-    // function testPerformUpkeep() public {
-    //     testInvest();
-    //     skip(31 days);
+        address receiver = address(0x2);
+        vm.deal(receiver, 1 ether);
 
-    //     propertyManager.performUpkeep("");
+        vm.startPrank(user);
+        token.transfer(receiver, token.balanceOf(user) / 2);
+        vm.stopPrank();
 
-    //     uint256 reward = propertyManager.accumulatedReward(user);
-    //     assertGt(reward, 0, "Reward should be distributed");
-    // }
+        uint256 userInv = propertyManager.userInvestments(user, 1);
+        uint256 receiverInv = propertyManager.userInvestments(receiver, 1);
+
+        assertGt(
+            receiverInv,
+            0,
+            "Receiver should have investment value updated"
+        );
+        assertLt(userInv, 1 ether, "User's investment should be reduced");
+    }
 
     // Additional tests for property token creation and dynamic pricing:
     function testPropertyTokenCreation() public {
@@ -236,5 +239,63 @@ contract PropertyTestingScript is Test {
             expectedInitialPrice,
             "Initial price should be calculated correctly based on totalRaised and totalSupply"
         );
+    }
+
+    function testCannotReenterClaim() public {
+        propertyManager.createProperty("Test", "TST", 10 ether, 10);
+
+        string memory secret = "haxor";
+        vm.prank(owner);
+        propertyManager.addTraditionalInvestment(user, 1, secret, 5 ether);
+
+        skip(2 days);
+
+        vm.prank(user);
+        propertyManager.claimTokensBySecret(secret);
+
+        // Try re-entering again with same secret
+        vm.expectRevert("Tokens already claimed");
+        vm.prank(user);
+        propertyManager.claimTokensBySecret(secret);
+    }
+
+    function testHoldStartTimeUpdateOnTransfer() public {
+        testInvest();
+
+        (, , , , , address tokenAddress, ) = propertyManager.properties(1);
+        PropertyToken token = PropertyToken(tokenAddress);
+
+        address receiver = address(0x2);
+        vm.deal(receiver, 1 ether);
+
+        // Fast forward to simulate holding
+        skip(10 days);
+
+        uint256 amountToSend;
+        vm.startPrank(user);
+        amountToSend = token.balanceOf(user) / 2;
+        token.transfer(receiver, amountToSend);
+        vm.stopPrank();
+
+        uint256 holdTimeReceiver = propertyManager.holdStartTime(receiver, 1);
+        uint256 holdTimeSender = propertyManager.holdStartTime(user, 1);
+
+        assertGt(holdTimeReceiver, 0, "Receiver hold time should be set");
+        assertLt(
+            holdTimeSender,
+            block.timestamp,
+            "Sender's hold time should not reset"
+        );
+    }
+
+    function testTransferMoreThanBalanceFails() public {
+        testInvest();
+        (, , , , , address tokenAddress, ) = propertyManager.properties(1);
+        PropertyToken token = PropertyToken(tokenAddress);
+
+        vm.startPrank(user);
+        vm.expectRevert(); // ERC20 should revert
+        token.transfer(address(0x3), token.balanceOf(user) + 1);
+        vm.stopPrank();
     }
 }
