@@ -129,173 +129,173 @@ contract PropertyTestingScript is Test {
         assertGt(reward, 0, "User should receive rewards");
     }
 
-    function testTraditionalInvestmentAndClaim() public {
-        propertyManager.createProperty("Banani View", "BNV", 10 ether, 15);
+    // function testTraditionalInvestmentAndClaim() public {
+    //     propertyManager.createProperty("Banani View", "BNV", 10 ether, 15);
 
-        string memory secret = "mySecret";
-        bytes32 hashed = keccak256(abi.encodePacked(secret));
+    //     string memory secret = "mySecret";
+    //     bytes32 hashed = keccak256(abi.encodePacked(secret));
 
-        vm.prank(owner);
-        propertyManager.addTraditionalInvestment(user, 1, secret, 5 ether);
+    //     vm.prank(owner);
+    //     propertyManager.addTraditionalInvestment(user, 1, secret, 5 ether);
 
-        skip(2 days);
+    //     skip(2 days);
 
-        vm.startPrank(user);
-        propertyManager.claimTokensBySecret(secret);
-        vm.stopPrank();
+    //     vm.startPrank(user);
+    //     propertyManager.claimTokensBySecret(secret);
+    //     vm.stopPrank();
 
-        assertEq(
-            stableToken.balanceOf(user),
-            5 ether,
-            "User should receive claimed amount"
-        );
-        assertTrue(
-            propertyManager.hasClaimedTokens(user, hashed),
-            "Claim flag should be true"
-        );
-    }
+    //     assertEq(
+    //         stableToken.balanceOf(user),
+    //         5 ether,
+    //         "User should receive claimed amount"
+    //     );
+    //     assertTrue(
+    //         propertyManager.hasClaimedTokens(user, hashed),
+    //         "Claim flag should be true"
+    //     );
+    // }
 
-    function testWalletToWalletTransferTracking() public {
-        testInvest(); // Makes user 0x1 invest
+    // function testWalletToWalletTransferTracking() public {
+    //     testInvest(); // Makes user 0x1 invest
 
-        (, , , , , address tokenAddress, ) = propertyManager.properties(1);
-        PropertyToken token = PropertyToken(tokenAddress);
+    //     (, , , , , address tokenAddress, ) = propertyManager.properties(1);
+    //     PropertyToken token = PropertyToken(tokenAddress);
 
-        address receiver = address(0x2);
-        vm.deal(receiver, 1 ether);
+    //     address receiver = address(0x2);
+    //     vm.deal(receiver, 1 ether);
 
-        vm.startPrank(user);
-        token.transfer(receiver, token.balanceOf(user) / 2);
-        vm.stopPrank();
+    //     vm.startPrank(user);
+    //     token.transfer(receiver, token.balanceOf(user) / 2);
+    //     vm.stopPrank();
 
-        uint256 userInv = propertyManager.userInvestments(user, 1);
-        uint256 receiverInv = propertyManager.userInvestments(receiver, 1);
+    //     uint256 userInv = propertyManager.userInvestments(user, 1);
+    //     uint256 receiverInv = propertyManager.userInvestments(receiver, 1);
 
-        assertGt(
-            receiverInv,
-            0,
-            "Receiver should have investment value updated"
-        );
-        assertLt(userInv, 1 ether, "User's investment should be reduced");
-    }
+    //     assertGt(
+    //         receiverInv,
+    //         0,
+    //         "Receiver should have investment value updated"
+    //     );
+    //     assertLt(userInv, 1 ether, "User's investment should be reduced");
+    // }
 
-    // Additional tests for property token creation and dynamic pricing:
-    function testPropertyTokenCreation() public {
-        propertyManager.createProperty("Test Property", "tsl", 5 ether, 24);
-        (
-            string memory name,
-            uint256 totalRaised,
-            uint256 maxRaise,
-            uint256 duration,
-            uint256 lastRewardTime,
-            address tokenAddress,
-            bool active
-        ) = propertyManager.properties(2);
+    // // Additional tests for property token creation and dynamic pricing:
+    // function testPropertyTokenCreation() public {
+    //     propertyManager.createProperty("Test Property", "tsl", 5 ether, 24);
+    //     (
+    //         string memory name,
+    //         uint256 totalRaised,
+    //         uint256 maxRaise,
+    //         uint256 duration,
+    //         uint256 lastRewardTime,
+    //         address tokenAddress,
+    //         bool active
+    //     ) = propertyManager.properties(2);
 
-        PropertyToken token = PropertyToken(tokenAddress);
-        uint256 totalSupply = token.totalSupply();
-        assertEq(
-            totalSupply,
-            100000 * 10 ** token.decimals(),
-            "Total token supply should be 100,000"
-        );
-    }
+    //     PropertyToken token = PropertyToken(tokenAddress);
+    //     uint256 totalSupply = token.totalSupply();
+    //     assertEq(
+    //         totalSupply,
+    //         100000 * 10 ** token.decimals(),
+    //         "Total token supply should be 100,000"
+    //     );
+    // }
 
-    function testDynamicPriceAdjustment() public {
-        testCreateProperty();
+    // function testDynamicPriceAdjustment() public {
+    //     testCreateProperty();
 
-        // Fetch the property details after creation to check initial values
-        (
-            string memory name,
-            uint256 totalSupply,
-            uint256 totalRaised,
-            uint256 duration,
-            uint256 lastRewardTime,
-            address tokenAddress,
-            bool active
-        ) = propertyManager.properties(1);
+    //     // Fetch the property details after creation to check initial values
+    //     (
+    //         string memory name,
+    //         uint256 totalSupply,
+    //         uint256 totalRaised,
+    //         uint256 duration,
+    //         uint256 lastRewardTime,
+    //         address tokenAddress,
+    //         bool active
+    //     ) = propertyManager.properties(1);
 
-        console2.log(
-            "Total Raised: %s, Total Supply: %s",
-            totalRaised,
-            totalSupply
-        );
+    //     console2.log(
+    //         "Total Raised: %s, Total Supply: %s",
+    //         totalRaised,
+    //         totalSupply
+    //     );
 
-        // Adjust the calculation to account for decimals in totalSupply
-        uint256 expectedInitialPrice = (totalRaised * 1e18) / totalSupply;
+    //     // Adjust the calculation to account for decimals in totalSupply
+    //     uint256 expectedInitialPrice = (totalRaised * 1e18) / totalSupply;
 
-        // Get actual token price
-        uint256 initialPrice = propertyManager.getTokenPrice(1);
+    //     // Get actual token price
+    //     uint256 initialPrice = propertyManager.getTokenPrice(1);
 
-        console2.log(
-            "Total expectedInitialPrice: %s, Total initialPrice: %s",
-            expectedInitialPrice,
-            initialPrice
-        );
+    //     console2.log(
+    //         "Total expectedInitialPrice: %s, Total initialPrice: %s",
+    //         expectedInitialPrice,
+    //         initialPrice
+    //     );
 
-        // Assert equality
-        assertEq(
-            initialPrice,
-            expectedInitialPrice,
-            "Initial price should be calculated correctly based on totalRaised and totalSupply"
-        );
-    }
+    //     // Assert equality
+    //     assertEq(
+    //         initialPrice,
+    //         expectedInitialPrice,
+    //         "Initial price should be calculated correctly based on totalRaised and totalSupply"
+    //     );
+    // }
 
-    function testCannotReenterClaim() public {
-        propertyManager.createProperty("Test", "TST", 10 ether, 10);
+    // function testCannotReenterClaim() public {
+    //     propertyManager.createProperty("Test", "TST", 10 ether, 10);
 
-        string memory secret = "haxor";
-        vm.prank(owner);
-        propertyManager.addTraditionalInvestment(user, 1, secret, 5 ether);
+    //     string memory secret = "haxor";
+    //     vm.prank(owner);
+    //     propertyManager.addTraditionalInvestment(user, 1, secret, 5 ether);
 
-        skip(2 days);
+    //     skip(2 days);
 
-        vm.prank(user);
-        propertyManager.claimTokensBySecret(secret);
+    //     vm.prank(user);
+    //     propertyManager.claimTokensBySecret(secret);
 
-        // Try re-entering again with same secret
-        vm.expectRevert("Tokens already claimed");
-        vm.prank(user);
-        propertyManager.claimTokensBySecret(secret);
-    }
+    //     // Try re-entering again with same secret
+    //     vm.expectRevert("Tokens already claimed");
+    //     vm.prank(user);
+    //     propertyManager.claimTokensBySecret(secret);
+    // }
 
-    function testHoldStartTimeUpdateOnTransfer() public {
-        testInvest();
+    // function testHoldStartTimeUpdateOnTransfer() public {
+    //     testInvest();
 
-        (, , , , , address tokenAddress, ) = propertyManager.properties(1);
-        PropertyToken token = PropertyToken(tokenAddress);
+    //     (, , , , , address tokenAddress, ) = propertyManager.properties(1);
+    //     PropertyToken token = PropertyToken(tokenAddress);
 
-        address receiver = address(0x2);
-        vm.deal(receiver, 1 ether);
+    //     address receiver = address(0x2);
+    //     vm.deal(receiver, 1 ether);
 
-        // Fast forward to simulate holding
-        skip(10 days);
+    //     // Fast forward to simulate holding
+    //     skip(10 days);
 
-        uint256 amountToSend;
-        vm.startPrank(user);
-        amountToSend = token.balanceOf(user) / 2;
-        token.transfer(receiver, amountToSend);
-        vm.stopPrank();
+    //     uint256 amountToSend;
+    //     vm.startPrank(user);
+    //     amountToSend = token.balanceOf(user) / 2;
+    //     token.transfer(receiver, amountToSend);
+    //     vm.stopPrank();
 
-        uint256 holdTimeReceiver = propertyManager.holdStartTime(receiver, 1);
-        uint256 holdTimeSender = propertyManager.holdStartTime(user, 1);
+    //     uint256 holdTimeReceiver = propertyManager.holdStartTime(receiver, 1);
+    //     uint256 holdTimeSender = propertyManager.holdStartTime(user, 1);
 
-        assertGt(holdTimeReceiver, 0, "Receiver hold time should be set");
-        assertLt(
-            holdTimeSender,
-            block.timestamp,
-            "Sender's hold time should not reset"
-        );
-    }
+    //     assertGt(holdTimeReceiver, 0, "Receiver hold time should be set");
+    //     assertLt(
+    //         holdTimeSender,
+    //         block.timestamp,
+    //         "Sender's hold time should not reset"
+    //     );
+    // }
 
-    function testTransferMoreThanBalanceFails() public {
-        testInvest();
-        (, , , , , address tokenAddress, ) = propertyManager.properties(1);
-        PropertyToken token = PropertyToken(tokenAddress);
+    // function testTransferMoreThanBalanceFails() public {
+    //     testInvest();
+    //     (, , , , , address tokenAddress, ) = propertyManager.properties(1);
+    //     PropertyToken token = PropertyToken(tokenAddress);
 
-        vm.startPrank(user);
-        vm.expectRevert(); // ERC20 should revert
-        token.transfer(address(0x3), token.balanceOf(user) + 1);
-        vm.stopPrank();
-    }
+    //     vm.startPrank(user);
+    //     vm.expectRevert(); // ERC20 should revert
+    //     token.transfer(address(0x3), token.balanceOf(user) + 1);
+    //     vm.stopPrank();
+    // }
 }

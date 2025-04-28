@@ -9,7 +9,6 @@ import {KeeperCompatibleInterface} from "../lib/chainlink-brownie-contracts/cont
 import {AggregatorV3Interface} from "../lib/chainlink-brownie-contracts/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {PropertyToken} from "./PropertyToken.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {TraditionalInvestmentManager} from "./TraditionalInvestmentManager.sol";
 
 contract PropertyManagement is
     Ownable,
@@ -42,11 +41,18 @@ contract PropertyManagement is
     mapping(address => uint256) public accumulatedReward;
     mapping(address => mapping(uint256 => uint256)) public lastClaimed;
 
+    // Traditional Investment Mechanism
+    mapping(bytes32 => uint256) public frozenInvestments;
+    mapping(address => bool) public isTraditionalInvestor;
+    mapping(address => mapping(bytes32 => bool)) public hasClaimedTokens;
+    mapping(bytes32 => uint256) public traditionalInvestmentStartTime;
+    mapping(address => mapping(bytes32 => uint256))
+        public traditionalInvestmentDuration;
+
     AggregatorV3Interface internal priceFeed;
     uint256 public propertyCounter;
 
     address public tokenAddress;
-    TraditionalInvestmentManager public traditionalManager;
 
     event PropertyCreated(
         uint256 indexed propertyId,
@@ -70,7 +76,6 @@ contract PropertyManagement is
         uint256 amount,
         uint256 tokensBurned
     );
-
     event Traded(
         address indexed from,
         address indexed to,
@@ -81,34 +86,21 @@ contract PropertyManagement is
 
     event RewardDistributed(address indexed user, uint256 amount);
 
-    constructor(
-        address _priceFeed,
-        address _tokenAddress
-    ) Ownable(msg.sender) {
+    event TraditionalInvestmentAdded(
+        address indexed user,
+        uint256 propertyId,
+        uint256 amount
+    );
+    event TraditionalInvestmentClaimed(
+        address indexed user,
+        uint256 propertyId,
+        uint256 amount
+    );
+
+    constructor(address _priceFeed, address _tokenAddress) Ownable(msg.sender) {
         priceFeed = AggregatorV3Interface(_priceFeed);
         tokenAddress = _tokenAddress;
         lastRewardDistribution = block.timestamp;
-    }
-
-    function setTraditionalManager(
-        address _traditionalManager
-    ) external onlyOwner {
-        traditionalManager = TraditionalInvestmentManager(_traditionalManager);
-    }
-
-    function incrementInvestment(
-        uint256 _propertyId,
-        uint256 _amount
-    ) external {
-        require(
-            msg.sender == address(traditionalManager),
-            "Only TraditionalManager can call"
-        );
-
-        Property storage property = properties[_propertyId];
-        require(property.active, "Inactive property");
-
-        property.investedAmount += _amount;
     }
 
     function createProperty(
@@ -148,10 +140,6 @@ contract PropertyManagement is
         );
     }
 
-    function getInvestorCount() external view returns (uint256) {
-        return investors.length;
-    }
-
     function getTokenPrice(uint256 _propertyId) public view returns (uint256) {
         Property storage property = properties[_propertyId];
         require(property.totalSupply > 0, "Invalid property supply");
@@ -178,9 +166,10 @@ contract PropertyManagement is
             property.totalRaised;
         require(propertyTokens > 0, "Investment too low for tokens");
 
+        uint256 contractTokenBalance = PropertyToken(property.propertyToken)
+            .balanceOf(address(this));
         require(
-            PropertyToken(property.propertyToken).balanceOf(address(this)) >=
-                propertyTokens,
+            contractTokenBalance >= propertyTokens,
             "Not enough tokens available"
         );
 
@@ -210,6 +199,56 @@ contract PropertyManagement is
         emit Invested(msg.sender, _propertyId, _amount, propertyTokens);
     }
 
+    function addTraditionalInvestment(
+        address _investor,
+        uint256 _propertyId,
+        string calldata _secret,
+        uint256 _amount
+    ) external onlyOwner {
+        bytes32 secretHash = keccak256(abi.encodePacked(_secret));
+        frozenInvestments[secretHash] += _amount;
+
+        isTraditionalInvestor[_investor] = true;
+        traditionalInvestmentStartTime[secretHash] = block.timestamp;
+
+        Property storage property = properties[_propertyId];
+        property.investedAmount += _amount;
+
+        emit TraditionalInvestmentAdded(_investor, _propertyId, _amount);
+    }
+
+    function claimTokensBySecret(
+        string calldata _secret
+    ) external whenNotPaused nonReentrant {
+        bytes32 secretHash = keccak256(abi.encodePacked(_secret));
+        uint256 amount = frozenInvestments[secretHash];
+
+        require(amount > 0, "No frozen investment found for this secret");
+        require(
+            !hasClaimedTokens[msg.sender][secretHash],
+            "Tokens already claimed"
+        );
+
+        uint256 startTime = traditionalInvestmentStartTime[secretHash];
+        traditionalInvestmentDuration[msg.sender][secretHash] =
+            block.timestamp -
+            startTime;
+
+        ERC20(tokenAddress).safeTransfer(msg.sender, amount);
+        frozenInvestments[secretHash] = 0;
+        hasClaimedTokens[msg.sender][secretHash] = true;
+
+        if (!isInvestor[msg.sender]) {
+            isInvestor[msg.sender] = true;
+            investors.push(msg.sender);
+        }
+
+        isTraditionalInvestor[msg.sender] = false;
+        delete traditionalInvestmentStartTime[secretHash];
+
+        emit TraditionalInvestmentClaimed(msg.sender, 0, amount);
+    }
+
     function distributeRewards() public whenNotPaused nonReentrant {
         require(
             block.timestamp >=
@@ -229,6 +268,7 @@ contract PropertyManagement is
 
             for (uint256 j = 0; j < investors.length; j++) {
                 address user = investors[j];
+
                 uint256 userInvestment = userInvestments[user][i];
                 uint256 holdStart = holdStartTime[user][i];
 
@@ -326,17 +366,6 @@ contract PropertyManagement is
         emit Traded(msg.sender, _to, _propertyId, _amount, investmentValue);
     }
 
-    function getPropertyIdByToken(
-        address token
-    ) internal view returns (uint256) {
-        for (uint256 i = 1; i <= propertyCounter; i++) {
-            if (properties[i].propertyToken == token) {
-                return i;
-            }
-        }
-        return 0;
-    }
-
     function onTokenTransfer(
         address from,
         address to,
@@ -384,5 +413,16 @@ contract PropertyManagement is
         }
 
         emit Traded(from, to, propertyId, amount, investmentValue);
+    }
+
+    function getPropertyIdByToken(
+        address token
+    ) internal view returns (uint256) {
+        for (uint256 i = 1; i <= propertyCounter; i++) {
+            if (properties[i].propertyToken == token) {
+                return i;
+            }
+        }
+        return 0;
     }
 }
