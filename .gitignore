@@ -14,7 +14,8 @@ out/
 docs/
 
 # Dotenv file
-.env
 
 # zkSync
 zkout/
+config.bat
+node_modules
